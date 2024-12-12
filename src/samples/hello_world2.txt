@@ -1,0 +1,5 @@
+Hello, World!
+This is a sample text file.
+We are learning how to create text files.
+The subject of this file is "Hello, World!".
+Have a great day

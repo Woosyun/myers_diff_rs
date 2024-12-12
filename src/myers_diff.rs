@@ -1,147 +1,115 @@
-use crate::diagonals_in_square::DiagonalsInSquare;
+use crate::edit_graph::EditGraph;
 
-pub struct EditGraph<T> {
-    a: Vec<T>,
-    b: Vec<T>,
-    forward_diagonals: DiagonalsInSquare,
-    backward_diagonals: DiagonalsInSquare,
+#[derive(PartialEq, Debug)]
+pub enum EditAction {
+    Add(usize, String),
+    Delete(usize),
 }
 
-impl<T> EditGraph<T> 
-where T: Clone + PartialEq
-{
-    pub fn new(a: Vec<T>, b: Vec<T>) -> Self {
+pub struct EditScript {
+    before: String,
+    after: String,
+}
+
+impl EditScript {
+    pub fn new(before: String, after: String) -> Self {
         Self {
-            a: a.clone(),
-            b: b.clone(),
-            forward_diagonals: DiagonalsInSquare::new(0, a.len(), b.len()),
-            backward_diagonals: DiagonalsInSquare::new(a.len(), a.len(), b.len()),
+            before,
+            after
         }
     }
 
-    pub fn update_forward_diagonal(&mut self, k: isize, d: isize) {
-        let mut x = if k==d || (k!=-d && self.forward_diagonals.get_x(k-1) > self.forward_diagonals.get_x(k+1)) {
-            self.forward_diagonals.get_x(k-1)
-        } else {
-            self.forward_diagonals.get_x(k+1) + 1
-        };
-        let y = x as isize + k;
-        assert!(y >= 0);
-        let mut y = y as usize;
+    fn myers_diff(&self, len_of_lcs: usize, before: &[&str], after: &[&str]) -> Result<(usize, Vec<EditAction>), String> {
+        dbg!(len_of_lcs, before, after);
+        
+        if before.len() == 0 {
+            let adds = after
+                .iter()
+                .enumerate()
+                .map(|(idx, &str)| EditAction::Add(idx+len_of_lcs, str.to_string()))
+                .collect::<Vec<EditAction>>();
 
-        while x < self.a.len() && y < self.b.len() && self.a[x] == self.b[y] {
-            x += 1;
-            y += 1;
+            return Ok((len_of_lcs, adds));
+        } else if after.len() == 0 {
+            let deletes = before
+                .iter()
+                .enumerate()
+                .map(|(idx, _)| EditAction::Delete(idx+len_of_lcs))
+                .collect::<Vec<EditAction>>();
+
+            return Ok((len_of_lcs, deletes));
         }
-        self.forward_diagonals.set_x(k, x);
+
+        let mut edit_graph = EditGraph::new(before, after);
+        let middle_snake = edit_graph.find_middle_snake().expect("failed to find middle snake");
+
+        let before_front = before
+            .iter()
+            .take(middle_snake.x.0)
+            .map(|&t| t)
+            .collect::<Vec<&str>>();
+        let after_front = after
+            .iter()
+            .take(middle_snake.y.0)
+            .map(|&t| t)
+            .collect::<Vec<&str>>();
+
+        let before_back = before
+            .iter()
+            .skip(middle_snake.x.1)
+            // .take(before.len() - middle_snake.x.1 + 1)
+            .map(|&t| t)
+            .collect::<Vec<&str>>();
+        let after_back = after
+            .iter()
+            .skip(middle_snake.y.1)
+            // .take(after.len() - middle_snake.y.1 + 1)
+            .map(|&t| t)
+            .collect::<Vec<&str>>();
+
+        let (temp, mut front) = self.myers_diff(len_of_lcs, &before_front, &after_front)?;
+        let len_of_lcs = len_of_lcs + temp + middle_snake.x.1 - middle_snake.x.0;
+        let (len_of_lcs, back)= self.myers_diff(len_of_lcs, &before_back, &after_back)?;
+        front.extend(back);
+        
+        Ok((len_of_lcs, front))
     }
-    pub fn update_backward_diagonal(&mut self, k: isize, d: isize) {
-        let mut x = if k==-d || (k!=d && self.backward_diagonals.get_x(k+1) < self.backward_diagonals.get_x(k-1)) {
-            self.backward_diagonals.get_x(k+1)
-        } else {
-            self.backward_diagonals.get_x(k-1) - 1
-        };
-        let y = x as isize + k;
-        assert!(y >= 0);
-        let mut y = y as usize;
 
-        while x > 0 && y > 0 && self.a[x-1] == self.b[y-1] {
-            x -= 1;
-            y -= 1;
-        }
-        self.backward_diagonals.set_x(k, x);
-    }
+    pub fn diff(&self) -> Result<Vec<EditAction>, String> {
+        let before: Vec<&str> = self.before.lines().collect::<Vec<&str>>();
+        let after: Vec<&str> = self.after.lines().collect::<Vec<&str>>();
 
-    pub fn find_middle_snake(&mut self) -> Option<(isize, usize, usize)> {
-        let boundary = (self.a.len() + self.b.len()) / 2;
-        for d in 0..=boundary as isize {
-            //phase 1
-            for k in (-d..=d).step_by(2) {
-                self.update_forward_diagonal(k, d);
-
-                let l = self.forward_diagonals.get_x(k);
-                let r = self.backward_diagonals.get_x(k);
-                if l >= r {
-                    return Some((k, l, r));
-                }
-            }
-
-            // phase 2
-            for k in (-d..=d).step_by(2) {
-                self.update_backward_diagonal(k, d);
-
-                let l = self.forward_diagonals.get_x(k);
-                let r = self.backward_diagonals.get_x(k);
-                if l >= r {
-                    return Some((k, l, r));
-                }
-            }
-        }
-
-        None
+        self.myers_diff(0, &before, &after)
+            .map(|(_, v)| v)
     }
 }
-
-
-
-
 
 #[cfg(test)] 
 pub mod tests {
+    use std::fs;
     use super::*;
 
     #[test] 
-    pub fn initialize_edit_graph() {
-        let edit_graph = EditGraph::new(vec![0, 1], vec![0, 1]);
-        
-        assert_eq!(edit_graph.forward_diagonals.get_x(0), 0);
-        assert_eq!(edit_graph.backward_diagonals.get_x(0), 2);
-    }
-    
-    #[test] 
-    pub fn forward_once() {
-        let mut edit_graph = EditGraph::new(vec![0, 1], vec![0, 1]);
-        edit_graph.update_forward_diagonal(0, 0);
-        assert_eq!(edit_graph.forward_diagonals.get_x(0), 2);
+    pub fn edit_nothing() {
+        let file1 = fs::read_to_string("src/samples/same1.txt").expect("missing same1.txt");
+        let file2 = fs::read_to_string("src/samples/same2.txt").expect("missing same2.txt");
+
+        let edit_script = EditScript::new(file1, file2);
+
+        assert_eq!(edit_script.diff(), Ok(vec![]));
     }
 
-    #[test] 
-    pub fn backward_once() {
-        let mut edit_graph = EditGraph::new(vec![0, 1], vec![0, 1]);
-        edit_graph.update_backward_diagonal(0, 0);
+    #[test]
+    pub fn edit_one_line() {
+        let file1 = fs::read_to_string("src/samples/hello_world1.txt").expect("missing hello_world1.txt");
+        let file2 = fs::read_to_string("src/samples/hello_world2.txt").expect("missing hello_world2.txt");
 
-        assert_eq!(edit_graph.backward_diagonals.get_x(0), 0);
-    }
+        let edit_script = EditScript::new(file1, file2);
+        let edit_actions = vec![
+            EditAction::Add(4, "Have a great day".to_string()),
+            EditAction::Delete(4),
+        ];
 
-    #[test] 
-    pub fn edit_none() {
-        let mut edit_graph = EditGraph::new(vec![0, 1], vec![2, 3]);
-        edit_graph.update_forward_diagonal(0, 0);
-        
-        assert_eq!(edit_graph.forward_diagonals.get_x(0), 0);
-    }
-    #[test] 
-    pub fn edit_once() {
-        let mut edit_graph = EditGraph::new(vec![0, 1], vec![2, 3]);
-        edit_graph.update_forward_diagonal(0, 0);
-        edit_graph.update_forward_diagonal(1, 1);
-        edit_graph.update_forward_diagonal(-1, 1);
-        
-        assert_eq!(edit_graph.forward_diagonals.get_x(1), 0);
-        assert_eq!(edit_graph.forward_diagonals.get_x(-1), 1);
-
-        edit_graph.update_backward_diagonal(0, 0);
-        edit_graph.update_backward_diagonal(1, 1);
-        edit_graph.update_backward_diagonal(-1, 1);
-
-        assert_eq!(edit_graph.backward_diagonals.get_x(-1), 2);
-        assert_eq!(edit_graph.backward_diagonals.get_x(1), 1);
-    }
-
-    #[test] 
-    pub fn find_middle_snake_1() {
-        let mut edit_graph = EditGraph::new(vec![0, 1], vec![1, 3]);
-        let middle_snake = edit_graph.find_middle_snake().expect("middle snake not found");
-        assert_eq!(middle_snake, (-1, 1, 2));
+        assert_eq!(edit_script.diff(), Ok(edit_actions));
     }
 }
