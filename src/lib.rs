@@ -1,2 +1,2 @@
 pub mod myers_diff;
-pub mod edit_graph;
+pub use myers_diff::{myers_diff, EditAction};
