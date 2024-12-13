@@ -50,20 +50,16 @@ impl<'a> EditGraph<'a>
 {
     fn new(a: &'a [&'a str], b: &'a [&'a str]) -> Self {
         let max = std::cmp::max(a.len(), b.len());
-        let mut new_edit_graph = EditGraph {
+        EditGraph {
             a,
             b,
             forward_diagonals: vec![0; 2*max + 1],
             backward_diagonals: vec![a.len(); 2*max + 1],
-        };
-        
-        let d0 = b.len();
-        new_edit_graph.forward_diagonals[d0] = 0;
-        
-        let d_delta = (new_edit_graph.delta() + new_edit_graph.b.len() as isize) as usize;
-        new_edit_graph.backward_diagonals[d_delta] = a.len();
+        }
+    }
 
-        new_edit_graph
+    fn max_axis(&self) -> usize {
+        std::cmp::max(self.a.len(), self.b.len())
     }
     
     fn delta(&self) -> isize {
@@ -71,15 +67,15 @@ impl<'a> EditGraph<'a>
     }
 
     fn update_forward_diagonal(&mut self, k: isize, d: isize) {
-        let idx = (k + self.b.len() as isize) as usize;
+        let idx = (k + self.max_axis() as isize) as usize;
         
-        let r = self.forward_diagonals[idx + 1];
-        let l = self.forward_diagonals[idx - 1];
+        let l = || self.forward_diagonals[idx-1];
+        let r = || self.forward_diagonals[idx+1];
         
-        let mut x = if k==-d || (k!=d && r > l) {
-            r
+        let mut x = if k==-d || (k!=d && r() > l()) {
+            r()
         } else {
-            l + 1
+            l() + 1
         };
 
         let mut y = (x as isize - k) as usize;
@@ -93,18 +89,19 @@ impl<'a> EditGraph<'a>
 
     // k and d are related to length of edit script, not direct diagonal index
     fn update_backward_diagonal(&mut self, k: isize, d: isize) {
-        let idx = (self.delta() + k + self.b.len() as isize) as usize;
+        let idx = (self.delta() + k + self.max_axis() as isize) as usize;
         
-        let r = self.backward_diagonals[idx + 1];
-        let l = self.backward_diagonals[idx - 1];
-        let mut x = if k==self.delta()+d || (k!=self.delta()-d && l <= r) {
-            l
+        let l = || self.backward_diagonals[idx-1];
+        let r = || self.backward_diagonals[idx+1];
+        
+        let mut x = if k==d || (k != -d && l() < r()) {
+            l()
         } else {
-            r - 1
+            r() - 1
         };
 
-        let mut y = (x as isize - k - self.delta()) as usize;
-        while x > 0 && y > 0 && self.a[x-1] == self.b[y-1] {
+        let mut y = x as isize - k - self.delta();
+        while x > 0 && y > 0 && self.a[x-1] == self.b[y as usize - 1] {
             x -= 1;
             y -= 1;
         }
@@ -112,13 +109,15 @@ impl<'a> EditGraph<'a>
     }
 
     fn find_middle_snake(&mut self) -> Option<MiddleSnake> {
-        for d in 0..= self.a.len().div_ceil(self.b.len()) as isize {
+        let boundary = self.a.len() + self.b.len();
+
+        for d in 0..= boundary.div_ceil(2) as isize {
             //phase 1
             for k in (-d..=d).step_by(2) {
                 self.update_forward_diagonal(k, d);
 
                 if self.delta().abs() % 2 == 1 && self.delta() - (d - 1) <= k && k <= self.delta() + (d + 1) {
-                    let idx = (k + self.b.len() as isize) as usize;
+                    let idx = (k + self.max_axis() as isize) as usize;
                     
                     let forward_x = self.forward_diagonals[idx];
                     let backward_x = self.backward_diagonals[idx];
@@ -152,7 +151,7 @@ impl<'a> EditGraph<'a>
             let adds = self.b
                 .iter()
                 .enumerate()
-                .map(|(idx, &str)| EditAction::Add(base + idx, str.to_string()))
+                .map(|(_, &str)| EditAction::Add(base, str.to_string()))
                 .collect::<Vec<EditAction>>();
 
             return Ok((base, adds));
@@ -160,7 +159,7 @@ impl<'a> EditGraph<'a>
             let deletes = self.a
                 .iter()
                 .enumerate()
-                .map(|(idx, _)| EditAction::Delete(base + idx))
+                .map(|_| EditAction::Delete(base))
                 .collect::<Vec<EditAction>>();
 
             return Ok((base, deletes));
@@ -276,8 +275,8 @@ pub mod tests {
 
     #[test] 
     pub fn edit_nothing() {
-        let file1 = fs::read_to_string("src/samples/same1.txt").expect("missing same1.txt");
-        let file2 = fs::read_to_string("src/samples/same2.txt").expect("missing same2.txt");
+        let file1 = fs::read_to_string("src/samples/hello_world.txt").expect("missing hello_world.txt");
+        let file2 = fs::read_to_string("src/samples/hello_world.txt").expect("missing hello_world.txt");
 
         let edit_actions = myers_diff(file1, file2).expect("failed to diff");
         
@@ -296,5 +295,28 @@ pub mod tests {
         ];
 
         assert_eq!(edit_actions, ans);
+    }
+
+    #[test]
+    pub fn delete_one_line() {
+        let file1 = fs::read_to_string("src/samples/hello_world.txt").expect("missing file1");
+        let file2 = fs::read_to_string("src/samples/nothing.txt").expect("missing file2");
+    
+        let re: Vec<EditAction> = myers_diff(file1, file2).expect("failed to diff");
+        let ans = vec![
+            EditAction::Delete(0)
+        ];
+
+        assert_eq!(re, ans);
+    }
+
+    #[test] 
+    pub fn edit_dog_to_cat() {
+        let file1 = fs::read_to_string("src/samples/dog.txt").expect("missing file1");
+        let file2 = fs::read_to_string("src/samples/cat.txt").expect("missing file2");
+
+        let re = myers_diff(file1, file2).expect("failed to diff");
+
+        assert_eq!(re, vec![]);
     }
 }
